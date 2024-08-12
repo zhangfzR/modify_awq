@@ -2,8 +2,8 @@ from awq import AutoAWQForCausalLM
 from transformers import AutoTokenizer
 
 
-model_path = '/mnt/public/open_source_model/Qwen1.5-0.5B'
-# model_path = '/root/zhangfengzhao/listmodel/Llama-2-7b-hf'
+# model_path = '/mnt/public/open_source_model/Qwen1.5-0.5B'
+model_path = '/root/zhangfengzhao/listmodel/Llama-2-7b-hf'
 quant_path = '/root/zhangfengzhao/test_algorithm/llama2_7b_awq_lwc_int4_g64_lr1e-2'
 quant_config = { "zero_point": True, "q_group_size": 64, "w_bit": 4, "version": "GEMM" }
 
