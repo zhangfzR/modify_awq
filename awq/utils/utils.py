@@ -298,15 +298,15 @@ class FakeLinear(nn.Module):
         super(FakeLinear, self).__init__()
         self.ori_layer = ori_layer
         self.use_tmp_weight = use_tmp_weight
-        self.register_buffer('weight',ori_layer.weight)
         shape = self.ori_layer.weight.shape
         self.quant_module = quant_module(shape=shape, group_size=group_size, 
                                          zero_point=zero_point, init_value=init_value, w_bit=w_bit)
+        self.register_buffer('tmp_weight', self.ori_layer.weight.data.clone())
     
     def forward(self, x):
-        weight = self.quant_module(self.weight)
+        if self.use_tmp_weight:
+            weight = self.quant_module(self.tmp_weight)
+            self.tmp_weight = weight.data.clone()
+        else:
+            weight = self.quant_module(self.ori_layer.weight)
         return F.linear(x, weight, self.ori_layer.bias)
-    
-    def forward_for_weight_dequant(self):
-        self.weight = self.quant_module.pseudo_dequantize_tensor(self.weight)
-        return self.quant_module.scales, self.quant_module.zeros
