@@ -13,7 +13,7 @@ from tqdm import tqdm
 from typing import Dict, List, Optional
 from collections import defaultdict
 from awq.utils.calib_data import get_calib_dataset
-from awq.quantize.scale import apply_scale, apply_clip, apply_lwc, print_memory_usage
+from awq.quantize.scale import apply_scale, apply_clip, apply_lwc
 from awq.utils.utils import (clear_memory, get_best_device, NativeScalerWithGradNormCount, 
                              create_logger, FakeLinear)
 from awq.modules.linear import (
@@ -221,7 +221,6 @@ class AwqQuantizer:
 
 
     def learnable_weight_clipping(self, i, idx, prev_op, layers, inp:Tensor, module2inspect=None, kwargs={}):
-        print_memory_usage(f"Before learnable weight clipping {i} {idx}")
         if module2inspect is None:
             assert len(layers) == 1
             module2inspect = layers[0]
@@ -282,52 +281,53 @@ class AwqQuantizer:
 
     def quantize(self):
         for i in tqdm(range(len(self.modules)), desc="AWQ"):
-            # Move module and inputs to correct device
-            common_device = next(self.modules[i].parameters()).device
-            if common_device is None or str(common_device) == "cpu":
-                if torch.cuda.is_available():
-                    best_device = "cuda:" + str(i % torch.cuda.device_count())
-                else:
-                    best_device = get_best_device()
-
-                self.modules[i] = self.modules[i].to(best_device)
+            with torch.no_grad():
+                # Move module and inputs to correct device
                 common_device = next(self.modules[i].parameters()).device
+                if common_device is None or str(common_device) == "cpu":
+                    if torch.cuda.is_available():
+                        best_device = "cuda:" + str(i % torch.cuda.device_count())
+                    else:
+                        best_device = get_best_device()
 
-            if self.module_kwargs.get("position_ids") is not None:
-                self.module_kwargs["position_ids"] = self.module_kwargs[
-                    "position_ids"
-                ].to(common_device)
+                    self.modules[i] = self.modules[i].to(best_device)
+                    common_device = next(self.modules[i].parameters()).device
 
-            if self.module_kwargs.get("attention_mask") is not None:
-                self.module_kwargs["attention_mask"] = self.module_kwargs[
-                    "attention_mask"
-                ].to(common_device)
+                if self.module_kwargs.get("position_ids") is not None:
+                    self.module_kwargs["position_ids"] = self.module_kwargs[
+                        "position_ids"
+                    ].to(common_device)
 
-            self.inps = self.inps.to(common_device)
+                if self.module_kwargs.get("attention_mask") is not None:
+                    self.module_kwargs["attention_mask"] = self.module_kwargs[
+                        "attention_mask"
+                    ].to(common_device)
 
-            # [STEP 1]: Get layer, extract linear modules, extract input features
-            named_linears = get_named_linears(self.modules[i])
+                self.inps = self.inps.to(common_device)
 
-            # Filter out the linear layers we don't want to exclude
-            named_linears = exclude_layers_to_not_quantize(
-                named_linears, self.modules_to_not_convert
-            )
+                # [STEP 1]: Get layer, extract linear modules, extract input features
+                named_linears = get_named_linears(self.modules[i])
 
-            input_feat = self._get_input_feat(self.modules[i], named_linears)
-            clear_memory()
+                # Filter out the linear layers we don't want to exclude
+                named_linears = exclude_layers_to_not_quantize(
+                    named_linears, self.modules_to_not_convert
+                )
 
-            # [STEP 2]: Compute and apply scale list
-            module_config: List[Dict] = self.awq_model.get_layers_for_scaling(
-                self.modules[i], input_feat, self.module_kwargs
-            )
-            scales_list = [
-                self._search_best_scale(self.modules[i], **layer)
-                for layer in tqdm(module_config, desc="Best Scales", leave=False)
-            ]
-            apply_scale(self.modules[i], scales_list, input_feat_dict=input_feat)
-            scales_list = append_str_prefix(
-                scales_list, get_op_name(self.model, self.modules[i]) + "."
-            )
+                input_feat = self._get_input_feat(self.modules[i], named_linears)
+                clear_memory()
+
+                # [STEP 2]: Compute and apply scale list
+                module_config: List[Dict] = self.awq_model.get_layers_for_scaling(
+                    self.modules[i], input_feat, self.module_kwargs
+                )
+                scales_list = [
+                    self._search_best_scale(self.modules[i], **layer)
+                    for layer in tqdm(module_config, desc="Best Scales", leave=False)
+                ]
+                apply_scale(self.modules[i], scales_list, input_feat_dict=input_feat)
+                scales_list = append_str_prefix(
+                    scales_list, get_op_name(self.model, self.modules[i]) + "."
+                )
 
             # [STEP 3]: Compute and apply clipping list
             if self.disable_lwc:
@@ -361,6 +361,8 @@ class AwqQuantizer:
             self._apply_quant(self.modules[i], named_linears)
             clear_memory()
 
+    
+    @torch.no_grad()
     def _apply_quant(self, module, named_linears: Dict[str, nn.Linear]):
         for name, linear_layer in named_linears.items():
             # NOTE: small regression in perplexity if linear layer uses .cpu().float()
