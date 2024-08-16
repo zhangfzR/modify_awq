@@ -190,7 +190,6 @@ class BaseAWQForCausalLM(nn.Module):
         epochs = 20,
         lwc_lr = 1e-2,
         disable_lwc=True,
-        use_tmp_weight=False,
         use_adaround=False,
     ):
         """
@@ -240,7 +239,6 @@ class BaseAWQForCausalLM(nn.Module):
             epochs = epochs,
             lwc_lr = lwc_lr,
             disable_lwc=disable_lwc,
-            use_tmp_weight=use_tmp_weight,
             use_adaround=use_adaround,
         )
         self.quantizer.quantize()

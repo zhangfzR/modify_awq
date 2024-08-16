@@ -85,10 +85,10 @@ def apply_scale(module, scales_list, input_feat_dict=None):
 
 @torch.no_grad()
 def apply_lwc(module):
-    check_memory_usage()
     if isinstance(module, FakeLinear):
         module.ori_layer.weight.data = module.quant_module.pseudo_dequantize_tensor(module.ori_layer.weight)
         module.ori_layer.weight.grad = None 
+        module.quant_module._reshape_scales_zeros()
         if not hasattr(module.ori_layer, "scales"):
             module.ori_layer.scales = module.quant_module.scales
         if not hasattr(module.ori_layer, "zeros"):
@@ -101,6 +101,7 @@ def apply_lwc(module):
             if isinstance(layer, FakeLinear):
                 layer.ori_layer.weight.data = layer.quant_module.pseudo_dequantize_tensor(layer.ori_layer.weight)
                 layer.ori_layer.weight.grad = None
+                layer.quant_module._reshape_scales_zeros()
                 if not hasattr(layer.ori_layer, "scales"):
                     layer.ori_layer.scales = layer.quant_module.scales
                 if not hasattr(layer.ori_layer, "zeros"):

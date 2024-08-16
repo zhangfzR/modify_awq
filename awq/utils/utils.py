@@ -220,6 +220,7 @@ class UniformAffineQuantizer(nn.Module):
         self.upbound_factor = nn.Parameter(torch.ones((dim1,1))*self.init_value)
         self.lowbound_factor = nn.Parameter(torch.ones((dim1,1))*self.init_value)
         self.w_bit = w_bit
+
         if self.zero_point:
             self.max_int = 2**self.w_bit - 1
             self.min_int = 0
@@ -240,17 +241,23 @@ class UniformAffineQuantizer(nn.Module):
     def pseudo_dequantize_tensor(
         self, w: torch.Tensor):
         # get repeated count
-        repeat_count = w.data.shape[-1] // self.scales.shape[-1]
-        scales = self.scales.repeat(1, repeat_count).reshape(w.data.shape)
-
-        # dequantize
+        dim1, dim2 = w.shape
+        w = w.reshape(-1, self.group_size)
         if self.zero_point:
-            zeros = self.zeros.repeat(1, repeat_count).reshape(w.data.shape)
-            w = (w.data - zeros) * scales
+            w_dequant = (
+                    torch.clamp(self._round_ste(w / self.scales) + self.zeros, self.min_int, self.max_int) - self.zeros
+                ) * self.scales
         else:
-            w = w.data * scales
-        return w
-
+            w_dequant = torch.clamp(self._round_ste(w / self.scales), self.min_int, self.max_int) * self.scales
+        w_dequant = w_dequant.reshape(dim1, dim2)
+        return w_dequant
+    
+    @torch.no_grad()
+    def _reshape_scales_zeros(self):
+        self.scales = self.scales.reshape(self.shape[0], -1)
+        if self.zero_point:
+            self.zeros = self.zeros.reshape(self.shape[0], -1)
+        
     def forward(self, w:torch.Tensor):
         assert torch.isnan(w).sum() == 0
         org_w_shape = w.shape
@@ -270,7 +277,7 @@ class UniformAffineQuantizer(nn.Module):
             w_dequant = (
                     torch.clamp(self._round_ste(w / scales) + zeros, self.min_int, self.max_int) - zeros
                 ) * scales
-            zeros = zeros.view(org_w_shape[0], -1)
+            # zeros = zeros.view(org_w_shape[0], -1)
         else: 
             scales = wmax / self.max_int
             zeros = None
@@ -279,7 +286,7 @@ class UniformAffineQuantizer(nn.Module):
         assert torch.isnan(scales).sum() == 0
         assert torch.isnan(w_dequant).sum() == 0
 
-        scales = scales.view(org_w_shape[0], -1)
+        # scales = scales.view(org_w_shape[0], -1)
         w_dequant = w_dequant.reshape(org_w_shape)
         self.scales = scales
         self.zeros = zeros
@@ -293,20 +300,14 @@ class FakeLinear(nn.Module):
         zero_point=False,
         init_value=4.0,
         w_bit=4,
-        use_tmp_weight=False,
         quant_module=UniformAffineQuantizer):
         super(FakeLinear, self).__init__()
         self.ori_layer = ori_layer
-        self.use_tmp_weight = use_tmp_weight
         shape = self.ori_layer.weight.shape
         self.quant_module = quant_module(shape=shape, group_size=group_size, 
                                          zero_point=zero_point, init_value=init_value, w_bit=w_bit)
         self.register_buffer('tmp_weight', self.ori_layer.weight.data.clone())
     
     def forward(self, x):
-        if self.use_tmp_weight:
-            weight = self.quant_module(self.tmp_weight)
-            self.tmp_weight = weight.data.clone()
-        else:
-            weight = self.quant_module(self.ori_layer.weight)
+        weight = self.quant_module(self.ori_layer.weight)
         return F.linear(x, weight, self.ori_layer.bias)

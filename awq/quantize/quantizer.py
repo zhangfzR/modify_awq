@@ -9,6 +9,7 @@ import numpy as np
 import math
 import pdb
 import torch.nn.functional as F
+import copy
 from tqdm import tqdm
 from typing import Dict, List, Optional
 from collections import defaultdict
@@ -59,7 +60,6 @@ class AwqQuantizer:
         epochs = 20,
         lwc_lr = 1e-2,
         disable_lwc=True,
-        use_tmp_weight=False,
         use_adaround=False,
     ) -> None:
         self.awq_model = awq_model
@@ -91,7 +91,6 @@ class AwqQuantizer:
         self.init_value = 4.    # inti value of learnable weight clipping
         self.epochs = epochs
         self.lec_lr = lwc_lr
-        self.use_tmp_weight = use_tmp_weight
         
         self.logger = create_logger()
         self.disable_lwc = disable_lwc
@@ -226,6 +225,7 @@ class AwqQuantizer:
             module2inspect = layers[0]
         loss_scaler = NativeScalerWithGradNormCount()
         module2inspect.to(get_best_device())
+        # module2inspect_copy = copy.deepcopy(module2inspect)
 
         inp = inp.to(next(module2inspect.parameters()).device)
         device = inp.device
@@ -244,7 +244,7 @@ class AwqQuantizer:
             for fc in layers:
                 fake_linear = FakeLinear(ori_layer=fc, group_size=self.group_size, 
                                          zero_point=self.zero_point, init_value=self.init_value, 
-                                         w_bit=self.w_bit, use_tmp_weight=self.use_tmp_weight).to(device)
+                                         w_bit=self.w_bit).to(device)
                 param_list += fake_linear.quant_module.get_trainable_params()
                 fake_linear_list_tmp[id(fc)] = fake_linear
         if isinstance(module2inspect, nn.Linear):
@@ -259,7 +259,7 @@ class AwqQuantizer:
             norm_list = []
             with torch.cuda.amp.autocast():
                 int_w_output = self._module_forward(inp, module2inspect, module_kwargs)
-                loss = F.mse_loss(int_w_output, fp16_output).sqrt()
+                loss = F.mse_loss(int_w_output, fp16_output)
             if not math.isfinite(loss):
                 self.logger.info("Loss is NAN, stopping training")
                 pdb.set_trace()
@@ -271,11 +271,9 @@ class AwqQuantizer:
 
             loss_mean = torch.stack(loss_list).mean()
             norm_mean = torch.stack(norm_list).mean()
-            self.logger.info(f"layer {i} module {idx} iter {epochs} loss:{loss_mean} norm:{norm_mean} max memory_allocated {torch.cuda.max_memory_allocated(device) / 1024**2} ")
+            self.logger.info(f"layer {i} module {idx} iter {epochs} loss:{loss_mean} norm:{norm_mean} \
+                             max memory_allocated {torch.cuda.max_memory_allocated(device) / 1024**2} ")
         apply_lwc(module2inspect)
-        del param_list
-        del module_kwargs
-        del optimizer
         clear_memory()
 
 
@@ -330,23 +328,22 @@ class AwqQuantizer:
                 )
 
             # [STEP 3]: Compute and apply clipping list
-            if self.disable_lwc:
-                self.logger.info("Starting AWQ Clipping optimization")
-                if self.apply_clip:
-                    clip_list = self._search_best_clip(
-                        self.modules[i], named_linears, input_feat
-                    )
-                    apply_clip(self.modules[i], clip_list)
-                    clip_list = append_str_prefix(
-                        clip_list, get_op_name(self.model, self.modules[i]) + "."
-                    )
-            else:
-                print(f'learning rating for LWC is {self.lec_lr}')
+                if self.disable_lwc:
+                    self.logger.info("Starting AWQ Clipping optimization")
+                    if self.apply_clip:
+                        clip_list = self._search_best_clip(
+                            self.modules[i], named_linears, input_feat
+                        )
+                        apply_clip(self.modules[i], clip_list)
+                        clip_list = append_str_prefix(
+                            clip_list, get_op_name(self.model, self.modules[i]) + "."
+                        )
+            if not self.disable_lwc:       
                 self.logger.info("Starting LWC optimization")
                 for idx, layer in enumerate(tqdm(module_config, desc="LWC", leave=False)):
                     self.learnable_weight_clipping(i, idx, **layer)
 
-            # [STEP 4]: Quantize weights2
+            # # [STEP 4]: Quantize weights2
             if not self.export_compatible:
                 self._apply_quant(self.modules[i], named_linears)
 
