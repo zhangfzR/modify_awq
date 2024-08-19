@@ -306,8 +306,8 @@ class FakeLinear(nn.Module):
         shape = self.ori_layer.weight.shape
         self.quant_module = quant_module(shape=shape, group_size=group_size, 
                                          zero_point=zero_point, init_value=init_value, w_bit=w_bit)
-        self.register_buffer('tmp_weight', self.ori_layer.weight.data.clone())
     
     def forward(self, x):
         weight = self.quant_module(self.ori_layer.weight)
         return F.linear(x, weight, self.ori_layer.bias)
+    

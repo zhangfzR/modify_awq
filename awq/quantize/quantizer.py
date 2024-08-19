@@ -9,7 +9,6 @@ import numpy as np
 import math
 import pdb
 import torch.nn.functional as F
-import copy
 from tqdm import tqdm
 from typing import Dict, List, Optional
 from collections import defaultdict
@@ -251,7 +250,7 @@ class AwqQuantizer:
             module2inspect = fake_linear
         else:
             set_op_by_name_module_fakelinear(module2inspect, fake_linear_list_tmp)
-        optimizer = torch.optim.AdamW(param_list, lr=self.lec_lr)
+        optimizer = torch.optim.AdamW(param_list, lr=self.lec_lr, weight_decay=0.0)
         del fake_linear_list_tmp
 
         for epochs in tqdm(range(self.epochs)):
@@ -328,16 +327,15 @@ class AwqQuantizer:
                 )
 
             # [STEP 3]: Compute and apply clipping list
-                if self.disable_lwc:
-                    self.logger.info("Starting AWQ Clipping optimization")
-                    if self.apply_clip:
-                        clip_list = self._search_best_clip(
-                            self.modules[i], named_linears, input_feat
-                        )
-                        apply_clip(self.modules[i], clip_list)
-                        clip_list = append_str_prefix(
-                            clip_list, get_op_name(self.model, self.modules[i]) + "."
-                        )
+                self.logger.info("Starting AWQ Clipping optimization")
+                if self.apply_clip:
+                    clip_list = self._search_best_clip(
+                        self.modules[i], named_linears, input_feat
+                    )
+                    apply_clip(self.modules[i], clip_list)
+                    clip_list = append_str_prefix(
+                        clip_list, get_op_name(self.model, self.modules[i]) + "."
+                    )
             if not self.disable_lwc:       
                 self.logger.info("Starting LWC optimization")
                 for idx, layer in enumerate(tqdm(module_config, desc="LWC", leave=False)):

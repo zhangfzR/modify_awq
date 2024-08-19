@@ -114,13 +114,6 @@ def apply_lwc(module):
     clear_memory()
 
 
-def check_memory_usage():
-    print("Current GPU Memory Allocated:", torch.cuda.memory_allocated())
-    print("Max GPU Memory Allocated:", torch.cuda.max_memory_allocated())
-    print("Current GPU Memory Cached:", torch.cuda.memory_cached())
-    print("Max GPU Memory Cached:", torch.cuda.max_memory_cached())
-
-
 @torch.no_grad()
 def scale_ln_fcs(ln: nn.Linear, fcs: List[nn.Linear], scales: torch.Tensor):
     if not isinstance(fcs, list):
